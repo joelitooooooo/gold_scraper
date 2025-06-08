@@ -1,10 +1,10 @@
 # .github/workflows/gold_scraper.yml
-name: Gold Price Scraper
+name: Gold Price Scraper (Supabase)
 
 on:
   schedule:
-    # Täglich um 12:00 Uhr UTC (13:00/14:00 deutsche Zeit je nach Sommer-/Winterzeit)
-    - cron: '0 11 * * *'  # 11:00 UTC = 12:00/13:00 DE Zeit
+    # Täglich um 12:00 Uhr deutsche Zeit (11:00 UTC)
+    - cron: '0 11 * * *'
   workflow_dispatch:  # Ermöglicht manuellen Start
 
 jobs:
@@ -22,16 +22,11 @@ jobs:
         
     - name: Install dependencies
       run: |
-        pip install requests beautifulsoup4 mysql-connector-python pytz
+        pip install requests beautifulsoup4
         
-    - name: Run Gold Scraper
+    - name: Run Supabase Gold Scraper
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        python github_gold_scraper.py
-        
-    - name: Commit and push results
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add data/
-        git commit -m "Update gold prices - $(date)" || exit 0
-        git push
+        python supabase_gold_scraper.py
