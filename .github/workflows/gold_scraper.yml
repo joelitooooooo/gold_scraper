@@ -1,0 +1,37 @@
+# .github/workflows/gold_scraper.yml
+name: Gold Price Scraper
+
+on:
+  schedule:
+    # Täglich um 12:00 Uhr UTC (13:00/14:00 deutsche Zeit je nach Sommer-/Winterzeit)
+    - cron: '0 11 * * *'  # 11:00 UTC = 12:00/13:00 DE Zeit
+  workflow_dispatch:  # Ermöglicht manuellen Start
+
+jobs:
+  scrape-gold-prices:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 mysql-connector-python pytz
+        
+    - name: Run Gold Scraper
+      run: |
+        python github_gold_scraper.py
+        
+    - name: Commit and push results
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add data/
+        git commit -m "Update gold prices - $(date)" || exit 0
+        git push
