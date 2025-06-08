@@ -1,32 +1,6 @@
-# .github/workflows/gold_scraper.yml
-name: Gold Price Scraper (Supabase)
-
-on:
-  schedule:
-    # Täglich um 12:00 Uhr deutsche Zeit (11:00 UTC)
-    - cron: '0 11 * * *'
-  workflow_dispatch:  # Ermöglicht manuellen Start
-
-jobs:
-  scrape-gold-prices:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Install dependencies
-      run: |
-        pip install requests beautifulsoup4
-        
-    - name: Run Supabase Gold Scraper
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      run: |
-        python supabase_gold_scraper.py
+- name: Run Supabase Gold Scraper
+  env:
+    SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+  run: |
+    python supabase_gold_scraper.py
