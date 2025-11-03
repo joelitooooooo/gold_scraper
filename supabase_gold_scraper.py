@@ -12,19 +12,14 @@ from datetime import datetime
 import sys
 
 def get_supabase_config():
-    """
-    Get Supabase configuration from GitHub secrets
-    """
+    """Get Supabase configuration from GitHub secrets"""
     return {
         'url': os.environ.get('SUPABASE_URL'),
         'key': os.environ.get('SUPABASE_SERVICE_KEY')
     }
 
 def get_eur_tl_rate():
-    """
-    Get current EUR/TL exchange rate using Frankfurter API
-    Raises exception if rate cannot be fetched
-    """
+    """Fetch current EUR/TL exchange rate"""
     try:
         url = "https://api.frankfurter.dev/v1/latest"
         params = {"base": "EUR", "symbols": "TRY"}
@@ -35,226 +30,141 @@ def get_eur_tl_rate():
         return rate
     except Exception as e:
         print(f"❌ FEHLER: Kann EUR/TL Kurs nicht abrufen: {e}")
-        raise Exception(f"EUR/TL rate fetch failed: {e}")
+        raise
 
 def get_quarter_gold_prices():
-    """
-    Scrapes quarter gold prices from BigPara website
-    """
+    """Scrape quarter gold prices from BigPara"""
     url = "https://bigpara.hurriyet.com.tr/altin/ceyrek-altin-fiyati/"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.content, 'html.parser')
-        page_text = soup.get_text()
-        
-        # Extract prices using regex patterns
-        buy_pattern = r'alış fiyatı (\d{1,3}(?:[,\.]\d{3})*(?:[,\.]\d{2})?) TL'
-        sell_pattern = r'satış fiyatı (\d{1,3}(?:[,\.]\d{3})*(?:[,\.]\d{2})?) TL'
-        
-        buy_match = re.search(buy_pattern, page_text, re.IGNORECASE)
-        sell_match = re.search(sell_pattern, page_text, re.IGNORECASE)
-        
+        text = soup.get_text()
+
+        buy_match = re.search(r'alış fiyatı (\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?) TL', text, re.I)
+        sell_match = re.search(r'satış fiyatı (\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?) TL', text, re.I)
+
         if buy_match and sell_match:
-            # Parse prices
-            buy_price_tl = float(buy_match.group(1).replace('.', '').replace(',', '.'))
-            sell_price_tl = float(sell_match.group(1).replace('.', '').replace(',', '.'))
-            
-            # Get EUR conversion - MUST succeed or fail
-            try:
-                eur_tl_rate = get_eur_tl_rate()
-            except Exception as e:
-                return {
-                    'error': f'EUR/TL rate fetch failed: {str(e)}',
-                    'timestamp': datetime.now().isoformat(),
-                    'source': url
-                }
-            
-            gold_data = {
+            buy_tl = float(buy_match.group(1).replace('.', '').replace(',', '.'))
+            sell_tl = float(sell_match.group(1).replace('.', '').replace(',', '.'))
+            eur_tl = get_eur_tl_rate()
+            return {
                 'timestamp': datetime.now().isoformat(),
-                'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'buy_price_tl': buy_price_tl,
-                'sell_price_tl': sell_price_tl,
-                'buy_price_eur': round(buy_price_tl / eur_tl_rate, 2),
-                'sell_price_eur': round(sell_price_tl / eur_tl_rate, 2),
-                'eur_tl_rate': eur_tl_rate,
+                'buy_price_tl': buy_tl,
+                'sell_price_tl': sell_tl,
+                'buy_price_eur': round(buy_tl / eur_tl, 2),
+                'sell_price_eur': round(sell_tl / eur_tl, 2),
+                'eur_tl_rate': eur_tl,
                 'source': url,
                 'scraped_from': 'github_actions'
             }
-            
-            return gold_data
         else:
-            return {
-                'error': 'Could not extract gold prices from website',
-                'timestamp': datetime.now().isoformat(),
-                'source': url
-            }
-        
+            return {'error': 'Could not extract gold prices', 'source': url}
     except Exception as e:
-        return {
-            'error': f'Scraping failed: {str(e)}',
-            'timestamp': datetime.now().isoformat(),
-            'source': url
-        }
+        return {'error': f'Scraping failed: {e}', 'source': url}
 
-def save_to_supabase(gold_data):
-    """
-    Save gold data to Supabase PostgreSQL database
-    """
-    if 'error' in gold_data:
-        print(f"❌ Error in data, skipping save: {gold_data['error']}")
+def save_to_supabase(data):
+    """Insert record into Supabase"""
+    if 'error' in data:
+        print(f"❌ Error in data, skipping save: {data['error']}")
         return False
-    
-    config = get_supabase_config()
-    if not config['url'] or not config['key']:
-        print("❌ Supabase configuration missing!")
-        print("Please set SUPABASE_URL and SUPABASE_SERVICE_KEY in GitHub secrets")
+    cfg = get_supabase_config()
+    if not cfg['url'] or not cfg['key']:
+        print("❌ Missing Supabase config")
         return False
-    
     try:
-        # Prepare data for Supabase
-        db_data = {
-            'date': gold_data['timestamp'],
-            'buy_price_tl': gold_data['buy_price_tl'],
-            'sell_price_tl': gold_data['sell_price_tl'],
-            'buy_price_eur': gold_data['buy_price_eur'],
-            'sell_price_eur': gold_data['sell_price_eur'],
-            'eur_tl_rate': gold_data['eur_tl_rate'],
-            'source': gold_data['source'],
-            'scraped_from': gold_data['scraped_from']
-        }
-        
-        # Insert into Supabase via REST API
-        url = f"{config['url']}/rest/v1/gold_prices"
+        url = f"{cfg['url']}/rest/v1/gold_prices"
         headers = {
-            'apikey': config['key'],
-            'Authorization': f"Bearer {config['key']}",
+            'apikey': cfg['key'],
+            'Authorization': f"Bearer {cfg['key']}",
             'Content-Type': 'application/json',
             'Prefer': 'return=representation'
         }
-        
-        response = requests.post(url, json=db_data, headers=headers)
-        
-        if response.status_code == 201:
-            result = response.json()[0]
-            print(f"✅ Data successfully saved to Supabase!")
-            print(f"📊 Record ID: {result['id']}")
-            print(f"🏦 Database: Supabase PostgreSQL")
-            print(f"📋 Table: gold_prices")
-            print(f"⏰ Timestamp: {result['created_at']}")
+        payload = {
+            'date': data['timestamp'],
+            'buy_price_tl': data['buy_price_tl'],
+            'sell_price_tl': data['sell_price_tl'],
+            'buy_price_eur': data['buy_price_eur'],
+            'sell_price_eur': data['sell_price_eur'],
+            'eur_tl_rate': data['eur_tl_rate'],
+            'source': data['source'],
+            'scraped_from': data['scraped_from']
+        }
+        r = requests.post(url, json=payload, headers=headers)
+        if r.status_code == 201:
+            print("✅ Data successfully saved to Supabase!")
+            print(f"📊 Record ID: {r.json()[0]['id']}")
+            print(f"⏰ Timestamp: {r.json()[0]['created_at']}")
             return True
-        else:
-            print(f"❌ Supabase save failed: {response.status_code}")
-            print(f"Error: {response.text}")
-            return False
-            
+        print(f"❌ Supabase save failed: {r.status_code} – {r.text}")
+        return False
     except Exception as e:
         print(f"❌ Exception saving to Supabase: {e}")
         return False
 
 def get_recent_prices(limit=5):
-    """
-    Get recent prices from Supabase for display
-    """
-    config = get_supabase_config()
-    if not config['url'] or not config['key']:
+    """Retrieve recent records"""
+    cfg = get_supabase_config()
+    if not cfg['url'] or not cfg['key']:
         return []
-    
     try:
-        url = f"{config['url']}/rest/v1/gold_prices"
-        headers = {
-            'apikey': config['key'],
-            'Authorization': f"Bearer {config['key']}"
-        }
-        params = {
-            'select': 'created_at,buy_price_tl,sell_price_tl,buy_price_eur,sell_price_eur',
-            'order': 'created_at.desc',
-            'limit': limit
-        }
-        
-        response = requests.get(url, headers=headers, params=params)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"⚠️ Could not fetch recent prices: {response.status_code}")
-            return []
-            
-    except Exception as e:
-        print(f"⚠️ Error fetching recent prices: {e}")
+        r = requests.get(
+            f"{cfg['url']}/rest/v1/gold_prices",
+            headers={'apikey': cfg['key'], 'Authorization': f"Bearer {cfg['key']}"},
+            params={'select': 'created_at,buy_price_tl,sell_price_tl,buy_price_eur,sell_price_eur',
+                    'order': 'created_at.desc', 'limit': limit}
+        )
+        return r.json() if r.status_code == 200 else []
+    except Exception:
         return []
 
 def show_recent_data():
-    """
-    Display recent price data from Supabase
-    """
+    """Display recent prices safely"""
     print("\n📈 Letzte Goldpreise aus Supabase (5 neueste Einträge):")
     print("-" * 85)
-    
-    recent_prices = get_recent_prices(5)
-    
-    if not recent_prices:
-        print("❌ Keine Daten in der Datenbank gefunden.")
+    recs = get_recent_prices(5)
+    if not recs:
+        print("❌ Keine Daten gefunden.")
         return
-    
     print(f"{'Datum/Zeit':<20} {'Kauf TL':<12} {'Verkauf TL':<12} {'Kauf EUR':<12} {'Verkauf EUR':<12}")
     print("-" * 85)
-    
-    for record in recent_prices:
-        # Parse ISO datetime
-        created_at = datetime.fromisoformat(record['created_at'].replace('Z', '+00:00'))
-        date_str = created_at.strftime("%d.%m.%Y %H:%M")
-        
-        buy_tl = f"{record['buy_price_tl']:.2f}" if record['buy_price_tl'] else 'N/A'
-        sell_tl = f"{record['sell_price_tl']:.2f}" if record['sell_price_tl'] else 'N/A'
-        buy_eur = f"{record['buy_price_eur']:.2f}" if record['buy_price_eur'] else 'N/A'
-        sell_eur = f"{record['sell_price_eur']:.2f}" if record['sell_price_eur'] else 'N/A'
-        
-        print(f"{date_str:<20} {buy_tl:<12} {sell_tl:<12} {buy_eur:<12} {sell_eur:<12}")
+    for rec in recs:
+        raw = rec.get('created_at', '')
+        try:
+            ts = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        except ValueError:
+            # tolerate malformed fractions
+            try:
+                ts = datetime.strptime(raw.split('+')[0].split('.')[0], '%Y-%m-%dT%H:%M:%S')
+            except Exception:
+                ts = datetime.utcnow()
+        ds = ts.strftime('%d.%m.%Y %H:%M')
+        bt, st = rec.get('buy_price_tl') or 0, rec.get('sell_price_tl') or 0
+        be, se = rec.get('buy_price_eur') or 0, rec.get('sell_price_eur') or 0
+        print(f"{ds:<20} {bt:>8.2f}      {st:>8.2f}      {be:>8.2f}      {se:>8.2f}")
 
 def main():
-    """
-    Main scraping function for GitHub Actions with Supabase
-    """
     print("🔍 Supabase Cloud Gold Scraper Starting...")
     print(f"⏰ Current time: {datetime.now().isoformat()}")
     print("=" * 50)
-    
-    # Check Supabase configuration
-    config = get_supabase_config()
-    if not config['url'] or not config['key']:
+    cfg = get_supabase_config()
+    if not cfg['url'] or not cfg['key']:
         print("❌ FEHLER: Supabase-Konfiguration fehlt!")
-        print("Bitte setzen Sie SUPABASE_URL und SUPABASE_SERVICE_KEY in GitHub Secrets")
         sys.exit(1)
-    
     print("✅ Supabase configuration found")
-    
-    # Scrape gold prices
     print("\n🔍 Scraping gold prices from BigPara...")
-    gold_data = get_quarter_gold_prices()
-    
-    # Display results
-    if 'error' not in gold_data:
+    data = get_quarter_gold_prices()
+    if 'error' not in data:
         print("✅ Successfully scraped gold prices:")
-        print(f"   Buy TL:  {gold_data['buy_price_tl']:,.2f}")
-        print(f"   Sell TL: {gold_data['sell_price_tl']:,.2f}")
-        print(f"   Buy EUR: {gold_data['buy_price_eur']:,.2f}")
-        print(f"   Sell EUR: {gold_data['sell_price_eur']:,.2f}")
-        print(f"   EUR/TL Rate: {gold_data['eur_tl_rate']}")
+        print(f"   Buy TL:  {data['buy_price_tl']:,.2f}")
+        print(f"   Sell TL: {data['sell_price_tl']:,.2f}")
+        print(f"   Buy EUR: {data['buy_price_eur']:,.2f}")
+        print(f"   Sell EUR:{data['sell_price_eur']:,.2f}")
     else:
-        print(f"❌ Scraping failed: {gold_data['error']}")
-    
-    # Save to Supabase
+        print(f"❌ Scraping failed: {data['error']}")
     print("\n💾 Saving to Supabase...")
-    success = save_to_supabase(gold_data)
-    
-    if success:
+    if save_to_supabase(data):
         print("\n✅ CLOUD SCRAPING COMPLETED SUCCESSFULLY!")
         show_recent_data()
     else:
